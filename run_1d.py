@@ -15,7 +15,7 @@ from tqdm import tqdm
 import torch.optim as optim
 import torchvision.transforms.functional as F
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
 #################################################################################################### Load Pickle Files
 def trim_array(arr):
     if np.all(arr == 0):  # Check if the array is all zeros
@@ -72,6 +72,19 @@ def pad_trunc_audio(audio_data, target_length = int(np.percentile(audio_lengths,
     return standardized_data
 
 standardized_audios = pad_trunc_audio(audio_data)
+print("Done padding")
+
+class Normalization(nn.Module):
+    def __init__(self, mean, std):
+        super().__init__()
+        self.register_buffer("mean", torch.tensor(mean))
+        self.register_buffer("std", torch.tensor(std))
+
+    def forward(self, x):
+        with torch.no_grad():
+            x = x - self.mean
+            x = x / self.std
+        return x
 
 #################################################################################################### DataLoader Creation
 class AudioDataset(Dataset):
@@ -92,6 +105,11 @@ X_test = standardized_audios[size_train:]
 y_train = valence[:size_train]
 y_test = valence[size_train:]
 
+flatten = np.concatenate(X_train)
+mean = np.mean(flatten)
+std = flatten.std()
+normalization = Normalization(mean, std)
+
 batch_size = 64
 
 train_dataset = AudioDataset(X_train, y_train)
@@ -100,7 +118,7 @@ test_dataset = AudioDataset(X_test, y_test)
 train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, pin_memory=True,) # you can speed up the host to device transfer by enabling pin_memory.
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False, pin_memory=True,) # you can speed up the host to device transfer by enabling pin_memory.
 
-
+print("Done with data loaders")
 #################################################################################################### Model Architecture
 class CNN1d(nn.Module):
     def __init__(self, pre_proocesses, hidden_sizes, activation_function):
@@ -117,6 +135,7 @@ class CNN1d(nn.Module):
         # # add preprocessing steps
         # for process in pre_proocesses:
         #     self.layers.append(process)
+        self.layers.append(normalization)
 
         for i in range(len(self.hidden_sizes)):
             self.layers.append(nn.Conv1d(1 if i ==0 else self.hidden_sizes[i-1], self.hidden_sizes[i], kernel_size=3))
@@ -151,6 +170,19 @@ def calculate_metrics(actual, predicted):
         "R-squared (R^2)": r2
     }
 
+def loss_plot(train_loss, validation_loss, filename):
+    epochs = range(1, len(train_loss) + 1) # start at 1 instead of 0
+    # Plotting the training and validation losses
+    plt.figure(figsize=(5, 5))
+    plt.plot(epochs, train_loss, label='Training Loss', color='blue')
+    plt.plot(epochs, validation_loss, label='Validation Loss', color='red')
+    plt.title('Training and Validation Loss')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.legend()
+    plt.savefig(filename)
+    plt.show()
+    
 
 def train_model(net, optimizer, train_loader, val_loader, epochs):
     # Define the loss function
@@ -198,42 +230,43 @@ def train_model(net, optimizer, train_loader, val_loader, epochs):
         val_loss = val_running_loss / len(val_loader)
         val_loss_lst.append(val_loss)
 
-        # print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
+        print(f"Epoch {epoch+1}/{epochs}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}")
         
-    # #display loss graph
-    # loss_plot(train_loss_lst, val_loss_lst)
-    # print("Training for CNN is finished.")
+    #display loss graph
+    # loss_plot(train_loss_lst, val_loss_lst, "")
+    print("Training for CNN is finished.")
 
     return train_loss_lst, val_loss_lst
 #################################################################################################### Find Best Optimizer
-# names = [] # Initialize an empty list names to store optimizer names for visualization of results.
-# learning_rate = 0.001
-# num_epochs = 50
+names = [] # Initialize an empty list names to store optimizer names for visualization of results.
+learning_rate = 0.001
+num_epochs = 50
 
 
-# for opt in [optim.SGD, optim.Adagrad, optim.Adam]:
-#     names.append(opt.__name__)
-#     model_1d = CNN1d([], [16, 32, 64, 128, 256], nn.ReLU).to(device)
+for opt in [optim.SGD, optim.Adagrad, optim.Adam]:
+    names.append(opt.__name__)
+    model_1d = CNN1d([], [16, 32, 64, 128, 256], nn.ReLU).to(device)
 
-#     if opt is optim.SGD:
-#         optimizer = opt(model_1d.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
-#     else:
-#         optimizer = opt(model_1d.parameters(), lr=learning_rate)
+    if opt is optim.SGD:
+        optimizer = opt(model_1d.parameters(), lr=learning_rate, momentum=0.9, nesterov=True)
+    else:
+        optimizer = opt(model_1d.parameters(), lr=learning_rate)
 
     
-#     train_loss_lst, val_loss_lst = train_model(model_1d, optimizer, train_dataloader, test_dataloader, num_epochs)
-#     plt.plot(val_loss_lst)
-#     # Print the validation accuracy and loss in the last epoch
-#     print(f'{opt.__name__}\n\tValidation Loss: {val_loss_lst[-1]:.5}\n')
+    train_loss_lst, val_loss_lst = train_model(model_1d, optimizer, train_dataloader, test_dataloader, num_epochs)
+    plt.plot(val_loss_lst)
+    # Print the validation accuracy and loss in the last epoch
+    print(f'{opt.__name__}\n\tValidation Loss: {val_loss_lst[-1]:.5}\n')
     
 
-# #Display a legend in the plot for optimizer names.
-# plt.legend(names)
-# #Label the x-axis as "Epoch" and the y-axis as "Validation Accuracy."
-# plt.xlabel("Epoch")
-# plt.ylabel("Validation Loss")
-# #Show the plot containing the accuracy evolution over epochs for each optimizer.
-# plt.show()
+#Display a legend in the plot for optimizer names.
+plt.legend(names)
+#Label the x-axis as "Epoch" and the y-axis as "Validation Accuracy."
+plt.xlabel("Epoch")
+plt.ylabel("Validation Loss")
+#Show the plot containing the accuracy evolution over epochs for each optimizer.
+plt.savefig("optimizers_comparison.png")
+plt.show()
 
 #################################################################################################### Setup for Random Search
 
@@ -260,6 +293,32 @@ def generate_sequences(start=16, max_value=512):
 
     return finished_sequences
 
+def plot_search(results, x_str, y_str, res_str, scale=False):
+
+    # Assuming coarse_results is a list of dictionaries with 'lr', 'hidden_size', 'val_loss', and 'accuracy'
+    # Extract relevant information for the heatmap
+    lr_values = [result[x_str] for result in results]
+    hidden_size_values = [result[y_str] for result in results]
+    val_loss_values = [result[res_str] for result in results]
+
+    # Create a heatmap
+    plt.figure(figsize=(10, 8))
+    heatmap = plt.scatter(lr_values, hidden_size_values, c=val_loss_values, cmap='RdYlGn', marker='o', s=100)
+    plt.colorbar(heatmap, label=res_str)
+    if scale:
+        plt.xscale('log')  # Use a logarithmic scale for learning rates if appropriate
+
+    # Set labels and title
+    plt.xlabel(x_str)
+    plt.ylabel(y_str)
+    plt.title('Hyperparameter Search')
+    plt.grid(True)
+
+    # Show the plot
+    plt.savefig("comparison_coarse_fine_hyperparameter_tuning.png")
+
+    plt.show()
+
 def hyper_train_setup(hidden_sizes, learning_rate, num_epochs):
   # Create the model
     model_1d = CNN1d([], hidden_sizes, nn.ReLU).to(device)
@@ -268,7 +327,7 @@ def hyper_train_setup(hidden_sizes, learning_rate, num_epochs):
 
     ## Train the model
     train_loss_lst, eval_loss_lst = train_model(model_1d, optimizer, train_dataloader, test_dataloader, num_epochs)
-    # loss_plot(train_loss_lst, eval_loss_lst)
+    loss_plot(train_loss_lst, eval_loss_lst, f"hyperparameter_tuning_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
     return eval_loss_lst[-1] # last epoch loss
 
 #################################################################################################### Coarse Random Search
@@ -276,7 +335,7 @@ coarse_trials = 30
 num_epochs = 15
 coarse_results = []
 
-hidden_sizes_list = generate_sequences(16,512)
+hidden_sizes_list = generate_sequences(16,128)
 hidden_options = len(hidden_sizes_list)
 
 
@@ -293,16 +352,20 @@ for i in range(coarse_trials):
 
 # Find the best parameters from coarse search
 best_coarse_params = min(coarse_results, key=lambda x: x['loss'])
-# print(f"Best parameters found:\n - Learning rate: {best_coarse_params['lr']:.5}\n - Hidden sizes: {best_coarse_params['hidden_size']}\n - Validation loss: {best_coarse_params['loss']:.5}%")
+print(f"Best parameters found:\n - Learning rate: {best_coarse_params['lr']:.5}\n - Hidden sizes: {best_coarse_params['hidden_size']}\n - Validation loss: {best_coarse_params['loss']:.5}%")
 
 
 fine_trials = 10
-num_epochs = 15
 fine_results = []
+hidden_options = len(hidden_sizes_list)
+
 
 for _ in range(fine_trials):
     lr = 2**random.uniform(np.log2(0.5 * best_coarse_params['lr']), np.log2(1.5 * best_coarse_params['lr']))
-    index = random.randint(int(0.8 * best_coarse_params['index']), int(1.2 * best_coarse_params['index']) + 1) # not inclusive on the end
+
+    index = float('inf')
+    while index > hidden_options-1:
+        index = random.randint(int(0.8 * best_coarse_params['index']), int(1.2 * best_coarse_params['index']) + 1) # not inclusive on the end
     hidden_sizes = hidden_sizes_list[index]
     val_loss = hyper_train_setup(hidden_sizes, lr, num_epochs)
 
@@ -316,13 +379,22 @@ best_fine_params = min(fine_results, key=lambda x: x['loss'])
 
 print(f"Best parameters found with coarse search:\n - Learning rate: {best_coarse_params['lr']:.5}\n - Hidden sizes: {best_coarse_params['hidden_size']}\n - Validation loss: {best_coarse_params['loss']:.5}%")
 print(f"Best parameters found with fine search:\n - Learning rate: {best_fine_params['lr']:.5}\n - Hidden sizes: {best_fine_params['hidden_size']}\n - Validation loss: {best_fine_params['loss']:.5}%")
-
+plot_search(coarse_results + fine_results, "lr", "index", 'loss')
 #################################################################################################### Run and Save Best model
-model_best = CNN1d([], best_fine_params['hidden_size'], nn.ReLU).to(device)
-optimizer = optim.Adam(model_best.parameters(), lr=best_fine_params['lr'])
-train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 50)
+model_best = CNN1d([], best_coarse_params['hidden_size'], nn.ReLU).to(device)
+optimizer = optim.Adagrad(model_best.parameters(), lr=best_coarse_params['lr'])
+train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 20)
+loss_plot(train_loss_lst, val_loss_lst, f"best_model_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
 
-save_path = ""
+save_path = "best_coarse_model_adam_20_epochs_with_normalization"
 
 torch.save(model_best, save_path)
 
+model_best = CNN1d([], best_coarse_params['hidden_size'], nn.ReLU).to(device)
+optimizer = optim.Adam(model_best.parameters(), lr=best_coarse_params['lr'])
+train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 50)
+loss_plot(train_loss_lst, val_loss_lst, f"best_model_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
+
+save_path = "best_coarse_model_adam_50_epochs"
+
+torch.save(model_best, save_path)
