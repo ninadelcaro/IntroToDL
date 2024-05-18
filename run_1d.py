@@ -10,12 +10,13 @@ import matplotlib.pyplot as plt
 import librosa
 from torch.utils.data import Dataset, DataLoader
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from torchsummary import summary
 
 from tqdm import tqdm
 import torch.optim as optim
 import torchvision.transforms.functional as F
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 #################################################################################################### Load Pickle Files
 def trim_array(arr):
     if np.all(arr == 0):  # Check if the array is all zeros
@@ -35,8 +36,6 @@ for root, dirs, files in os.walk("train"):
            
            allaudios.append(loadedaudios)
            i+=1
-           if i==1000:
-               break
 
 audio_data = []
 valence = []
@@ -386,7 +385,7 @@ optimizer = optim.Adagrad(model_best.parameters(), lr=best_coarse_params['lr'])
 train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 13)
 loss_plot(train_loss_lst, val_loss_lst, f"best_model_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
 
-save_path = "best_coarse_model_adam_20_epochs_with_normalization"
+save_path = "best_coarse_model_adagrad_20_epochs_with_normalization"
 
 torch.save(model_best, save_path)
 
@@ -422,3 +421,4 @@ for filename in os.listdir("test"):
 
 # Create a DataFrame for better visualization and potential saving to CSV
 results_df = pd.DataFrame(results, columns=['ID', 'valence'])
+
