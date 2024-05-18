@@ -383,7 +383,7 @@ plot_search(coarse_results + fine_results, "lr", "index", 'loss')
 #################################################################################################### Run and Save Best model
 model_best = CNN1d([], best_coarse_params['hidden_size'], nn.ReLU).to(device)
 optimizer = optim.Adagrad(model_best.parameters(), lr=best_coarse_params['lr'])
-train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 20)
+train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 13)
 loss_plot(train_loss_lst, val_loss_lst, f"best_model_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
 
 save_path = "best_coarse_model_adam_20_epochs_with_normalization"
