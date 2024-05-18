@@ -390,11 +390,35 @@ save_path = "best_coarse_model_adam_20_epochs_with_normalization"
 
 torch.save(model_best, save_path)
 
-model_best = CNN1d([], best_coarse_params['hidden_size'], nn.ReLU).to(device)
-optimizer = optim.Adam(model_best.parameters(), lr=best_coarse_params['lr'])
-train_loss_lst, val_loss_lst = train_model(model_best, optimizer, train_dataloader, test_dataloader, 50)
-loss_plot(train_loss_lst, val_loss_lst, f"best_model_hidden_size_{hidden_sizes}_lr_{learning_rate:.4}_epochs_{num_epochs}.png")
+# Function to process a single pickle file and return the filename and prediction
+def process_file(file_path):
+    with open(file_path, 'rb') as file:
+        data = pickle.load(file)
+    #apply preprocessing
+    audio_data = data["audio_data"]
+    audio_trimmed = trim_array(audio_data)
+    
+    audio_pad_trunced = pad_trunc_audio([audio_trimmed])
+    audio_data_tensor = torch.tensor(audio_pad_trunced).unsqueeze(0)
 
-save_path = "best_coarse_model_adam_50_epochs"
+    # print(f"Original shape: {audio_data.shape}")
+    # print(f"Trimmed shape: {audio_trimmed.shape}")
+    # print(f"Pad/Truncated shape: {len(audio_pad_trunced[0])}")
+    # print(f"Tensor shape: {audio_data_tensor.shape}")
 
-torch.save(model_best, save_path)
+
+    valence = model_best(audio_data_tensor).item()
+    return os.path.basename(file_path), valence
+
+# List to store results
+results = []
+
+# Iterate through all files in the folder
+for filename in os.listdir("test"):
+    if filename.endswith('.pkl'):
+        file_path = os.path.join("test", filename)
+        file_id, valence = process_file(file_path)
+        results.append((file_id, valence))
+
+# Create a DataFrame for better visualization and potential saving to CSV
+results_df = pd.DataFrame(results, columns=['ID', 'valence'])
